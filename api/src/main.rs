@@ -1,23 +1,29 @@
 use dotenv::dotenv;
 use poem::{
-    handler, listener::TcpListener, web::Json, Route, Server, Result, error::InternalServerError
+    handler, listener::TcpListener, web::Json, Route, Server, IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
     pubkey::Pubkey,
-    signature::{Keypair, Signer},
+    signature::{Keypair, Signer, Signature},
+    system_instruction,
 };
+use spl_token::instruction as token_instruction;
 use std::env;
-use base58::ToBase58;
+use std::str::FromStr;
+use base58::{ToBase58, FromBase58};
+use base64::{Engine as _, engine::general_purpose};
 
 #[derive(Serialize)]
-struct ApiResponse<T> {
+struct ApiResponse {
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<T>,
+    data: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
+
+// --- Endpoint Structs ---
 
 #[derive(Serialize)]
 struct KeypairResponse {
@@ -25,22 +31,291 @@ struct KeypairResponse {
     secret: String,
 }
 
+#[derive(Deserialize)]
+struct CreateTokenRequest {
+    #[serde(rename = "mintAuthority")]
+    mint_authority: String,
+    mint: String,
+    decimals: u8,
+}
+
+#[derive(Serialize)]
+struct AccountMeta {
+    pubkey: String,
+    is_signer: bool,
+    is_writable: bool,
+}
+
+#[derive(Serialize)]
+struct InstructionResponse {
+    program_id: String,
+    accounts: Vec<AccountMeta>,
+    instruction_data: String,
+}
+
+#[derive(Deserialize)]
+struct MintTokenRequest {
+    mint: String,
+    destination: String,
+    authority: String,
+    amount: u64,
+}
+
+#[derive(Deserialize)]
+struct SignMessageRequest {
+    message: String,
+    secret: String,
+}
+
+#[derive(Serialize)]
+struct SignMessageResponse {
+    signature: String,
+    public_key: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct VerifyMessageRequest {
+    message: String,
+    signature: String,
+    pubkey: String,
+}
+
+#[derive(Serialize)]
+struct VerifyMessageResponse {
+    valid: bool,
+    message: String,
+    pubkey: String,
+}
+
+#[derive(Deserialize)]
+struct SendSolRequest {
+    from: String,
+    to: String,
+    lamports: u64,
+}
+
+#[derive(Deserialize)]
+struct SendTokenRequest {
+    destination: String,
+    mint: String,
+    owner: String,
+    amount: u64,
+}
+
+// --- Helper for consistent response ---
+
+fn success(data: serde_json::Value) -> Json<ApiResponse> {
+    Json(ApiResponse { success: true, data: Some(data), error: None })
+}
+
+fn error(msg: &str) -> Json<ApiResponse> {
+    Json(ApiResponse { success: false, data: None, error: Some(msg.to_string()) })
+}
+
+// --- Endpoints ---
+
 #[handler]
-async fn generate_keypair() -> Result<Json<ApiResponse<KeypairResponse>>> {
+async fn generate_keypair() -> impl IntoResponse {
     let keypair = Keypair::new();
-    let response = ApiResponse {
-        success: true,
-        data: Some(KeypairResponse {
-            pubkey: keypair.pubkey().to_string(),
-            secret: (&keypair.to_bytes()[..]).to_base58(),
-        }),
-        error: None,
+    let resp = KeypairResponse {
+        pubkey: keypair.pubkey().to_string(),
+        secret: (&keypair.to_bytes()[..]).to_base58(),
     };
-    Ok(Json(response))
+    match serde_json::to_value(resp) {
+        Ok(val) => success(val),
+        Err(_) => error("Serialization error"),
+    }
 }
 
 #[handler]
-async fn health() -> &'static str {
+async fn create_token(Json(req): Json<CreateTokenRequest>) -> impl IntoResponse {
+    let mint_authority = Pubkey::from_str(&req.mint_authority);
+    let mint = Pubkey::from_str(&req.mint);
+    if mint_authority.is_err() || mint.is_err() {
+        return error("Invalid public key(s)");
+    }
+    let instruction = token_instruction::initialize_mint(
+        &spl_token::id(),
+        &mint.unwrap(),
+        &mint_authority.unwrap(),
+        None,
+        req.decimals,
+    );
+    match instruction {
+        Ok(ix) => {
+            let accounts = ix.accounts.iter().map(|meta| AccountMeta {
+                pubkey: meta.pubkey.to_string(),
+                is_signer: meta.is_signer,
+                is_writable: meta.is_writable,
+            }).collect();
+            let resp = InstructionResponse {
+                program_id: ix.program_id.to_string(),
+                accounts,
+                instruction_data: general_purpose::STANDARD.encode(&ix.data),
+            };
+            match serde_json::to_value(resp) {
+                Ok(val) => success(val),
+                Err(_) => error("Serialization error"),
+            }
+        }
+        Err(e) => error(&format!("Failed to create instruction: {e}")),
+    }
+}
+
+#[handler]
+async fn mint_token(Json(req): Json<MintTokenRequest>) -> impl IntoResponse {
+    let mint = Pubkey::from_str(&req.mint);
+    let destination = Pubkey::from_str(&req.destination);
+    let authority = Pubkey::from_str(&req.authority);
+    if mint.is_err() || destination.is_err() || authority.is_err() {
+        return error("Invalid public key(s)");
+    }
+    let instruction = token_instruction::mint_to(
+        &spl_token::id(),
+        &mint.unwrap(),
+        &destination.unwrap(),
+        &authority.unwrap(),
+        &[],
+        req.amount,
+    );
+    match instruction {
+        Ok(ix) => {
+            let accounts = ix.accounts.iter().map(|meta| AccountMeta {
+                pubkey: meta.pubkey.to_string(),
+                is_signer: meta.is_signer,
+                is_writable: meta.is_writable,
+            }).collect();
+            let resp = InstructionResponse {
+                program_id: ix.program_id.to_string(),
+                accounts,
+                instruction_data: general_purpose::STANDARD.encode(&ix.data),
+            };
+            match serde_json::to_value(resp) {
+                Ok(val) => success(val),
+                Err(_) => error("Serialization error"),
+            }
+        }
+        Err(e) => error(&format!("Failed to create instruction: {e}")),
+    }
+}
+
+#[handler]
+async fn sign_message(Json(req): Json<SignMessageRequest>) -> impl IntoResponse {
+    if req.message.is_empty() || req.secret.is_empty() {
+        return error("Missing required fields");
+    }
+    let secret_bytes = req.secret.from_base58();
+    if let Ok(bytes) = secret_bytes {
+        if let Ok(keypair) = Keypair::from_bytes(&bytes) {
+            let signature = keypair.sign_message(req.message.as_bytes());
+            let resp = SignMessageResponse {
+                signature: general_purpose::STANDARD.encode(signature.as_ref()),
+                public_key: keypair.pubkey().to_string(),
+                message: req.message,
+            };
+            return match serde_json::to_value(resp) {
+                Ok(val) => success(val),
+                Err(_) => error("Serialization error"),
+            };
+        }
+    }
+    error("Invalid secret key")
+}
+
+#[handler]
+async fn verify_message(Json(req): Json<VerifyMessageRequest>) -> impl IntoResponse {
+    if req.message.is_empty() || req.signature.is_empty() || req.pubkey.is_empty() {
+        return error("Missing required fields");
+    }
+    let pubkey = Pubkey::from_str(&req.pubkey);
+    let signature_bytes = general_purpose::STANDARD.decode(&req.signature);
+    if let (Ok(pubkey), Ok(sig_bytes)) = (pubkey, signature_bytes) {
+        let signature = Signature::new(&sig_bytes);
+        let valid = signature.verify(&pubkey.to_bytes(), req.message.as_bytes());
+        let resp = VerifyMessageResponse {
+            valid,
+            message: req.message,
+            pubkey: req.pubkey,
+        };
+        return match serde_json::to_value(resp) {
+            Ok(val) => success(val),
+            Err(_) => error("Serialization error"),
+        };
+    }
+    error("Invalid signature or public key")
+}
+
+#[handler]
+async fn send_sol(Json(req): Json<SendSolRequest>) -> impl IntoResponse {
+    let from = Pubkey::from_str(&req.from);
+    let to = Pubkey::from_str(&req.to);
+    if from.is_err() || to.is_err() {
+        return error("Invalid public key(s)");
+    }
+    if req.lamports == 0 {
+        return error("Amount must be greater than zero");
+    }
+    let ix = system_instruction::transfer(&from.unwrap(), &to.unwrap(), req.lamports);
+    let accounts = ix.accounts.iter().map(|meta| AccountMeta {
+        pubkey: meta.pubkey.to_string(),
+        is_signer: meta.is_signer,
+        is_writable: meta.is_writable,
+    }).collect();
+    let resp = InstructionResponse {
+        program_id: ix.program_id.to_string(),
+        accounts,
+        instruction_data: general_purpose::STANDARD.encode(&ix.data),
+    };
+    match serde_json::to_value(resp) {
+        Ok(val) => success(val),
+        Err(_) => error("Serialization error"),
+    }
+}
+
+#[handler]
+async fn send_token(Json(req): Json<SendTokenRequest>) -> impl IntoResponse {
+    let destination = Pubkey::from_str(&req.destination);
+    let mint = Pubkey::from_str(&req.mint);
+    let owner = Pubkey::from_str(&req.owner);
+    if destination.is_err() || mint.is_err() || owner.is_err() {
+        return error("Invalid public key(s)");
+    }
+    if req.amount == 0 {
+        return error("Amount must be greater than zero");
+    }
+    let destination = destination.unwrap();
+    let ix = token_instruction::transfer(
+        &spl_token::id(),
+        &destination,
+        &destination, // source and destination are the same for simplicity
+        &owner.unwrap(),
+        &[],
+        req.amount,
+    );
+    match ix {
+        Ok(ix) => {
+            let accounts = ix.accounts.iter().map(|meta| AccountMeta {
+                pubkey: meta.pubkey.to_string(),
+                is_signer: meta.is_signer,
+                is_writable: meta.is_writable,
+            }).collect();
+            let resp = InstructionResponse {
+                program_id: ix.program_id.to_string(),
+                accounts,
+                instruction_data: general_purpose::STANDARD.encode(&ix.data),
+            };
+            match serde_json::to_value(resp) {
+                Ok(val) => success(val),
+                Err(_) => error("Serialization error"),
+            }
+        }
+        Err(e) => error(&format!("Failed to create instruction: {e}")),
+    }
+}
+
+#[handler]
+async fn health() -> impl IntoResponse {
     "OK"
 }
 
@@ -51,7 +326,13 @@ async fn main() -> Result<(), std::io::Error> {
     let addr = format!("127.0.0.1:{}", port);
     let app = Route::new()
         .at("/health", health)
-        .at("/keypair", generate_keypair);
+        .at("/keypair", generate_keypair)
+        .at("/token/create", create_token)
+        .at("/token/mint", mint_token)
+        .at("/message/sign", sign_message)
+        .at("/message/verify", verify_message)
+        .at("/send/sol", send_sol)
+        .at("/send/token", send_token);
     println!("🚀 Solana HTTP Server starting on {}", addr);
     Server::new(TcpListener::bind(addr))
         .run(app)

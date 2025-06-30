@@ -54,16 +54,40 @@ struct CreateTokenRequest {
 }
 
 #[derive(Serialize)]
-struct AccountMeta {
+struct AccountMetaCamel {
     pubkey: String,
+    #[serde(rename = "isSigner")]
     is_signer: bool,
-    is_writable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "isWritable")]
+    is_writable: Option<bool>,
 }
 
 #[derive(Serialize)]
-struct InstructionResponse {
+struct InstructionResponseCreateToken {
     program_id: String,
-    accounts: Vec<AccountMeta>,
+    accounts: serde_json::Map<String, serde_json::Value>,
+    instruction_data: String,
+}
+
+#[derive(Serialize)]
+struct InstructionResponseMintToken {
+    program_id: String,
+    accounts: Vec<AccountMetaCamel>,
+    instruction_data: String,
+}
+
+#[derive(Serialize)]
+struct InstructionResponseSendSol {
+    program_id: String,
+    accounts: Vec<String>,
+    instruction_data: String,
+}
+
+#[derive(Serialize)]
+struct InstructionResponseSendToken {
+    program_id: String,
+    accounts: Vec<AccountMetaCamel>,
     instruction_data: String,
 }
 
@@ -148,14 +172,17 @@ async fn create_token(Json(req): Json<CreateTokenRequest>) -> (StatusCode, Json<
     );
     match instruction {
         Ok(ix) => {
-            let accounts = ix.accounts.iter().map(|meta| AccountMeta {
-                pubkey: meta.pubkey.to_string(),
-                is_signer: meta.is_signer,
-                is_writable: meta.is_writable,
-            }).collect();
-            let resp = InstructionResponse {
+            let mut accounts_map = serde_json::Map::new();
+            for meta in ix.accounts.iter() {
+                let mut obj = serde_json::Map::new();
+                obj.insert("pubkey".to_string(), serde_json::Value::String(meta.pubkey.to_string()));
+                obj.insert("isSigner".to_string(), serde_json::Value::Bool(meta.is_signer));
+                obj.insert("isWritable".to_string(), serde_json::Value::Bool(meta.is_writable));
+                accounts_map.insert(meta.pubkey.to_string(), serde_json::Value::Object(obj));
+            }
+            let resp = InstructionResponseCreateToken {
                 program_id: ix.program_id.to_string(),
-                accounts,
+                accounts: accounts_map,
                 instruction_data: general_purpose::STANDARD.encode(&ix.data),
             };
             match serde_json::to_value(resp) {
@@ -185,12 +212,12 @@ async fn mint_token(Json(req): Json<MintTokenRequest>) -> (StatusCode, Json<ApiR
     );
     match instruction {
         Ok(ix) => {
-            let accounts = ix.accounts.iter().map(|meta| AccountMeta {
+            let accounts = ix.accounts.iter().map(|meta| AccountMetaCamel {
                 pubkey: meta.pubkey.to_string(),
                 is_signer: meta.is_signer,
-                is_writable: meta.is_writable,
+                is_writable: Some(meta.is_writable),
             }).collect();
-            let resp = InstructionResponse {
+            let resp = InstructionResponseMintToken {
                 program_id: ix.program_id.to_string(),
                 accounts,
                 instruction_data: general_purpose::STANDARD.encode(&ix.data),
@@ -261,12 +288,8 @@ async fn send_sol(Json(req): Json<SendSolRequest>) -> (StatusCode, Json<ApiRespo
         return error("Amount must be greater than zero");
     }
     let ix = system_instruction::transfer(&from.unwrap(), &to.unwrap(), req.lamports);
-    let accounts = ix.accounts.iter().map(|meta| AccountMeta {
-        pubkey: meta.pubkey.to_string(),
-        is_signer: meta.is_signer,
-        is_writable: meta.is_writable,
-    }).collect();
-    let resp = InstructionResponse {
+    let accounts = ix.accounts.iter().map(|meta| meta.pubkey.to_string()).collect();
+    let resp = InstructionResponseSendSol {
         program_id: ix.program_id.to_string(),
         accounts,
         instruction_data: general_purpose::STANDARD.encode(&ix.data),
@@ -299,12 +322,12 @@ async fn send_token(Json(req): Json<SendTokenRequest>) -> (StatusCode, Json<ApiR
     );
     match ix {
         Ok(ix) => {
-            let accounts = ix.accounts.iter().map(|meta| AccountMeta {
+            let accounts = ix.accounts.iter().map(|meta| AccountMetaCamel {
                 pubkey: meta.pubkey.to_string(),
                 is_signer: meta.is_signer,
-                is_writable: meta.is_writable,
+                is_writable: None,
             }).collect();
-            let resp = InstructionResponse {
+            let resp = InstructionResponseSendToken {
                 program_id: ix.program_id.to_string(),
                 accounts,
                 instruction_data: general_purpose::STANDARD.encode(&ix.data),

@@ -323,7 +323,7 @@ async fn health() -> impl IntoResponse {
 async fn main() -> Result<(), std::io::Error> {
     dotenv().ok();
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("0.0.0.0:{}", port);
     let app = Route::new()
         .at("/health", health)
         .at("/keypair", generate_keypair)

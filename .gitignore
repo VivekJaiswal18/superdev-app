@@ -4,6 +4,9 @@ PORT=3000
 .env
 .env.*
 
+code.rs
+README.md
+
 # Ignore target directory
 /target
 

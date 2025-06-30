@@ -1,0 +1,15 @@
+PORT=3000
+
+# Ignore environment variable files
+.env
+.env.*
+
+# Ignore target directory
+/target
+
+# Ignore IDE/editor files
+*.swp
+*.swo
+*.vscode/
+.idea/
+.DS_Store

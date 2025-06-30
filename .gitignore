@@ -5,7 +5,6 @@ PORT=3000
 .env.*
 
 code.rs
-README.md
 
 # Ignore target directory
 /target

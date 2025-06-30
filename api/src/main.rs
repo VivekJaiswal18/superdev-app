@@ -120,11 +120,11 @@ struct SendTokenRequest {
 // --- Endpoints ---
 
 #[handler]
-async fn generate_keypair() -> impl IntoResponse {
+async fn generate_keypair() -> (StatusCode, Json<ApiResponse>) {
     let keypair = Keypair::new();
     let resp = KeypairResponse {
         pubkey: keypair.pubkey().to_string(),
-        secret: (&keypair.to_bytes()[..]).to_base58(),
+        secret: keypair.to_bytes().as_ref().to_base58(),
     };
     match serde_json::to_value(resp) {
         Ok(val) => success(val),
@@ -133,7 +133,7 @@ async fn generate_keypair() -> impl IntoResponse {
 }
 
 #[handler]
-async fn create_token(Json(req): Json<CreateTokenRequest>) -> impl IntoResponse {
+async fn create_token(Json(req): Json<CreateTokenRequest>) -> (StatusCode, Json<ApiResponse>) {
     let mint_authority = Pubkey::from_str(&req.mint_authority);
     let mint = Pubkey::from_str(&req.mint);
     if mint_authority.is_err() || mint.is_err() {
@@ -168,7 +168,7 @@ async fn create_token(Json(req): Json<CreateTokenRequest>) -> impl IntoResponse 
 }
 
 #[handler]
-async fn mint_token(Json(req): Json<MintTokenRequest>) -> impl IntoResponse {
+async fn mint_token(Json(req): Json<MintTokenRequest>) -> (StatusCode, Json<ApiResponse>) {
     let mint = Pubkey::from_str(&req.mint);
     let destination = Pubkey::from_str(&req.destination);
     let authority = Pubkey::from_str(&req.authority);
@@ -205,7 +205,7 @@ async fn mint_token(Json(req): Json<MintTokenRequest>) -> impl IntoResponse {
 }
 
 #[handler]
-async fn sign_message(Json(req): Json<SignMessageRequest>) -> impl IntoResponse {
+async fn sign_message(Json(req): Json<SignMessageRequest>) -> (StatusCode, Json<ApiResponse>) {
     if req.message.is_empty() || req.secret.is_empty() {
         return error("Missing required fields");
     }
@@ -228,7 +228,7 @@ async fn sign_message(Json(req): Json<SignMessageRequest>) -> impl IntoResponse 
 }
 
 #[handler]
-async fn verify_message(Json(req): Json<VerifyMessageRequest>) -> impl IntoResponse {
+async fn verify_message(Json(req): Json<VerifyMessageRequest>) -> (StatusCode, Json<ApiResponse>) {
     if req.message.is_empty() || req.signature.is_empty() || req.pubkey.is_empty() {
         return error("Missing required fields");
     }
@@ -251,7 +251,7 @@ async fn verify_message(Json(req): Json<VerifyMessageRequest>) -> impl IntoRespo
 }
 
 #[handler]
-async fn send_sol(Json(req): Json<SendSolRequest>) -> impl IntoResponse {
+async fn send_sol(Json(req): Json<SendSolRequest>) -> (StatusCode, Json<ApiResponse>) {
     let from = Pubkey::from_str(&req.from);
     let to = Pubkey::from_str(&req.to);
     if from.is_err() || to.is_err() {
@@ -278,7 +278,7 @@ async fn send_sol(Json(req): Json<SendSolRequest>) -> impl IntoResponse {
 }
 
 #[handler]
-async fn send_token(Json(req): Json<SendTokenRequest>) -> impl IntoResponse {
+async fn send_token(Json(req): Json<SendTokenRequest>) -> (StatusCode, Json<ApiResponse>) {
     let destination = Pubkey::from_str(&req.destination);
     let mint = Pubkey::from_str(&req.mint);
     let owner = Pubkey::from_str(&req.owner);
@@ -319,8 +319,8 @@ async fn send_token(Json(req): Json<SendTokenRequest>) -> impl IntoResponse {
 }
 
 #[handler]
-async fn health() -> impl IntoResponse {
-    "OK"
+async fn health() -> (StatusCode, Json<ApiResponse>) {
+    success(serde_json::json!({"status": "OK"}))
 }
 
 #[tokio::main]

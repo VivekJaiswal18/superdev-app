@@ -1,6 +1,6 @@
 use dotenv::dotenv;
 use poem::{
-    handler, listener::TcpListener, web::Json, Route, Server, IntoResponse, Response, http::StatusCode
+    handler, listener::TcpListener, web::Json, Route, Server, IntoResponse, http::StatusCode
 };
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
@@ -23,16 +23,18 @@ struct ApiResponse {
     error: Option<String>,
 }
 
-fn success(data: serde_json::Value) -> Response {
-    Response::builder()
-        .status(StatusCode::OK)
-        .body(Json(ApiResponse { success: true, data: Some(data), error: None }))
+fn success(data: serde_json::Value) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::OK,
+        Json(ApiResponse { success: true, data: Some(data), error: None })
+    )
 }
 
-fn error(msg: &str) -> Response {
-    Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(Json(ApiResponse { success: false, data: None, error: Some(msg.to_string()) }))
+fn error(msg: &str) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ApiResponse { success: false, data: None, error: Some(msg.to_string()) })
+    )
 }
 
 // --- Endpoint Structs ---
